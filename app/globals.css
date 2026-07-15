@@ -429,6 +429,9 @@ h1, h2, p { margin-top: 0; }
 .finish-stats strong { font: 700 1.75rem Georgia, serif; color: var(--red); }
 .finish-card .secondary-button { display: block; margin: 0 auto 14px; min-width: 210px; }
 .finish-card .text-button { color: var(--muted); }
+.download-button { display: block; width: min(360px, 100%); margin: 0 auto 9px; }
+.download-note { color: var(--muted); font-size: .74rem; line-height: 1.5; margin: 0 auto 20px !important; }
+.download-note.error { color: var(--red-dark); }
 
 @media (max-width: 880px) {
   .app-grid { grid-template-columns: 1fr; padding-top: 22px; }

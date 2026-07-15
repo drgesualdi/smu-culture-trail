@@ -43,4 +43,7 @@ test("source contains all seven campus stops and private photo guidance", async 
   }
   assert.match(page, /Photos stay on this device/);
   assert.match(page, /No-camera \/ accessibility check-in/);
+  assert.match(page, /Download team field report/);
+  assert.match(page, /imageUrlToDataUrl/);
+  assert.match(page, /culture-trail-\$\{safeTeamName\}\.html/);
 });

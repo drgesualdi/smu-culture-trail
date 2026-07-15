@@ -249,6 +249,27 @@ type SavedState = {
   teamName: string;
 };
 
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+async function imageUrlToDataUrl(url: string) {
+  const response = await fetch(url);
+  const blob = await response.blob();
+
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
 export default function Home() {
   const [ready, setReady] = useState(false);
   const [started, setStarted] = useState(false);
@@ -259,6 +280,7 @@ export default function Home() {
   const [photos, setPhotos] = useState<Record<number, string>>({});
   const [alternatives, setAlternatives] = useState<number[]>([]);
   const [nudges, setNudges] = useState<number[]>([]);
+  const [downloadStatus, setDownloadStatus] = useState<"idle" | "preparing" | "ready" | "error">("idle");
   const fileInputs = useRef<Record<number, HTMLInputElement | null>>({});
   const photoUrls = useRef<Set<string>>(new Set());
 
@@ -327,6 +349,108 @@ export default function Home() {
     }
   }
 
+  async function downloadFieldReport() {
+    setDownloadStatus("preparing");
+
+    try {
+      const reportStops = await Promise.all(
+        stops.map(async (stop) => {
+          const photo = photos[stop.id]
+            ? await imageUrlToDataUrl(photos[stop.id])
+            : null;
+          const response = responses[stop.id]?.trim() || "No written response provided.";
+          const noPhotoNote = alternatives.includes(stop.id)
+            ? "No photo — accessibility check-in used."
+            : "No photo included.";
+
+          return `
+            <section class="stop">
+              <div class="stop-heading">
+                <span>STOP ${stop.id}</span>
+                <div>
+                  <h2>${escapeHtml(stop.activity)}</h2>
+                  <p>${escapeHtml(stop.location)} · ${escapeHtml(stop.chapter)}</p>
+                </div>
+              </div>
+              ${
+                photo
+                  ? `<img src="${photo}" alt="Check-in photo for ${escapeHtml(stop.location)}" />`
+                  : `<div class="no-photo">${escapeHtml(noPhotoNote)}</div>`
+              }
+              <div class="response">
+                <h3>${escapeHtml(stop.responseLabel)}</h3>
+                <p>${escapeHtml(response).replaceAll("\n", "<br />")}</p>
+              </div>
+              <div class="debrief"><strong>Debrief:</strong> ${escapeHtml(stop.debrief)}</div>
+            </section>`;
+        }),
+      );
+
+      const completedAt = new Intl.DateTimeFormat(undefined, {
+        dateStyle: "long",
+        timeStyle: "short",
+      }).format(new Date());
+
+      const report = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'" />
+  <title>The Culture Trail — ${escapeHtml(teamName)}</title>
+  <style>
+    :root { color-scheme: light; font-family: Arial, sans-serif; color: #191717; background: #f5efe5; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px 18px 64px; }
+    main { max-width: 820px; margin: 0 auto; }
+    header { border-top: 8px solid #b20f2b; background: #fffdf8; padding: 34px; margin-bottom: 22px; }
+    .eyebrow, .stop-heading > span { color: #b20f2b; font-size: 12px; font-weight: 800; letter-spacing: .12em; }
+    h1, h2 { font-family: Georgia, serif; }
+    h1 { font-size: 44px; margin: 10px 0; }
+    header p, .stop-heading p { color: #6d6661; margin: 0; }
+    .stop { background: #fffdf8; border: 1px solid #d8cec0; padding: 28px; margin: 18px 0; break-inside: avoid; }
+    .stop-heading { display: grid; grid-template-columns: 66px 1fr; gap: 14px; align-items: start; }
+    .stop-heading > span { border: 1px solid #b20f2b; border-radius: 999px; padding: 7px 8px; text-align: center; }
+    h2 { font-size: 26px; margin: 0 0 5px; }
+    img { display: block; width: 100%; max-height: 520px; object-fit: contain; background: #eee5d8; margin: 22px 0; }
+    .no-photo { padding: 32px; margin: 22px 0; text-align: center; color: #6d6661; background: #f5efe5; border: 1px dashed #cbbdad; }
+    .response { border-left: 4px solid #b20f2b; padding-left: 16px; margin-top: 22px; }
+    .response h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin: 0 0 8px; }
+    .response p { line-height: 1.6; margin: 0; }
+    .debrief { background: #f8f1df; border-left: 4px solid #dda928; padding: 14px; margin-top: 20px; line-height: 1.5; }
+    footer { color: #6d6661; text-align: center; font-size: 12px; margin-top: 24px; }
+    @media print { body { padding: 0; background: white; } .stop, header { box-shadow: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">SMU · THE CULTURE TRAIL</div>
+      <h1>${escapeHtml(teamName)}</h1>
+      <p>Team field report · Completed ${escapeHtml(completedAt)}</p>
+    </header>
+    ${reportStops.join("\n")}
+    <footer>Generated by The Culture Trail. Photos and responses were packaged locally on the team's device.</footer>
+  </main>
+</body>
+</html>`;
+
+      const blob = new Blob([report], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const safeTeamName = teamName.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "team";
+      link.href = url;
+      link.download = `culture-trail-${safeTeamName}.html`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+      setDownloadStatus("ready");
+    } catch {
+      setDownloadStatus("error");
+    }
+  }
+
   function resetTrail() {
     if (!window.confirm("Reset all team notes and completed stops on this device?")) return;
     Object.values(photos).forEach((url) => URL.revokeObjectURL(url));
@@ -337,6 +461,7 @@ export default function Home() {
     setAlternatives([]);
     setNudges([]);
     setTeamName("");
+    setDownloadStatus("idle");
     setStarted(false);
     setActiveId(1);
     window.localStorage.removeItem(storageKey);
@@ -376,7 +501,7 @@ export default function Home() {
             Start at Simmons Hall <span aria-hidden="true">→</span>
           </button>
           <p className="privacy-note">
-            Photos stay on this device and are not sent or saved. Your written field notes and progress are saved only in this browser.
+            Photos stay on this device and are included only if your team downloads its final report. Written field notes and progress are saved only in this browser.
           </p>
         </div>
       </main>
@@ -442,8 +567,22 @@ export default function Home() {
               <div className="finish-stats">
                 <span><strong>7</strong> campus stops</span>
                 <span><strong>7</strong> culture lenses</span>
-                <span><strong>1</strong> final debrief</span>
+                <span><strong>{Object.keys(photos).length}</strong> photos ready</span>
               </div>
+              <button
+                className="primary-button download-button"
+                onClick={downloadFieldReport}
+                disabled={downloadStatus === "preparing"}
+              >
+                {downloadStatus === "preparing" ? "Preparing report…" : "Download team field report"}
+              </button>
+              <p className={`download-note ${downloadStatus === "error" ? "error" : ""}`}>
+                {downloadStatus === "ready"
+                  ? "Downloaded—attach the HTML file to an email."
+                  : downloadStatus === "error"
+                    ? "The download could not be prepared. Review your photos and try again."
+                    : "One file containing all responses and currently attached photos."}
+              </p>
               <button className="secondary-button" onClick={() => setActiveId(1)}>
                 Review field notes
               </button>
